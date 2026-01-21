@@ -1,0 +1,135 @@
+{
+  "menus": {
+    "kitchen1": [
+      {
+        "id": 1,
+        "owner": "kitchen1",
+        "name": "Special Veg Thali",
+        "price": 150,
+        "description": "Complete meal with Paneer Butter Masala, Dal Fry, Jeera Rice, 2 Chapatis, Salad, and Gulab Jamun.",
+        "img": "https://loremflickr.com/400/300/indian,thali/all"
+      },
+      {
+        "id": 2,
+        "owner": "kitchen1",
+        "name": "Paneer Butter Masala",
+        "price": 180,
+        "description": "Rich and creamy cottage cheese curry cooked in tomato and cashew gravy.",
+        "img": "https://loremflickr.com/400/300/paneer,butter,masala/all"
+      },
+      {
+        "id": 3,
+        "owner": "kitchen1",
+        "name": "Chicken Biryani",
+        "price": 220,
+        "description": "Aromatic basmati rice cooked with tender chicken pieces and authentic spices. Served with Raita.",
+        "img": "https://loremflickr.com/400/300/chicken,biryani/all"
+      },
+      {
+        "id": 4,
+        "owner": "kitchen1",
+        "name": "Masala Dosa",
+        "price": 90,
+        "description": "Crispy fermented crepe stuffed with spiced potato filling. Served with coconut chutney and sambar.",
+        "img": "https://loremflickr.com/400/300/masala,dosa/all"
+      },
+      {
+        "id": 5,
+        "owner": "kitchen1",
+        "name": "Gulab Jamun (2 pcs)",
+        "price": 50,
+        "description": "Soft and spongy milk-solid balls soaked in rose-flavored sugar syrup.",
+        "img": "https://loremflickr.com/400/300/gulab,jamun/all"
+      }
+    ]
+  },
+  "orders": [
+    {
+      "id": "ORD-TEST",
+      "owner": "kitchen1",
+      "items": "1x Sync Burger",
+      "total": 100,
+      "status": "New",
+      "time": "12:00 PM",
+      "customer": {
+        "name": "Sync User",
+        "phone": "123"
+      }
+    },
+    {
+      "id": "ORD-0713",
+      "owner": "kitchen1",
+      "items": "1x Sync Burger, 1x Regular Thali, 1x Rash Malai",
+      "total": 420,
+      "status": "New",
+      "time": "10:15",
+      "customer": {
+        "name": "Akash Saxena",
+        "phone": "9682903775"
+      }
+    },
+    {
+      "id": "ORD-5326",
+      "owner": "kitchen1",
+      "items": "1x Sync Burger",
+      "total": 100,
+      "status": "New",
+      "time": "10:16",
+      "customer": {
+        "name": "Akash Saxena",
+        "phone": "9682903775"
+      }
+    },
+    {
+      "id": "ORD-3276",
+      "owner": "kitchen1",
+      "items": "1x Sync Burger",
+      "total": 100,
+      "status": "New",
+      "time": "10:16",
+      "customer": {
+        "name": "Akash Saxena",
+        "phone": "9682903775"
+      }
+    },
+    {
+      "id": "ORD-7458",
+      "owner": "kitchen1",
+      "items": "1x Sync Burger, 1x Regular Thali, 1x Rash Malai",
+      "total": 420,
+      "status": "New",
+      "time": "10:28",
+      "customer": {
+        "name": "Akash Saxena",
+        "phone": "9682903775",
+        "address": "\ud83d\udccd Location: https://maps.google.com/?q=18.588868619219568,73.98145737478367"
+      }
+    },
+    {
+      "id": "ORD-5542",
+      "owner": "kitchen1",
+      "items": "1x Special Veg Thali, 1x Paneer Butter Masala, 1x Chicken Biryani",
+      "total": 550,
+      "status": "New",
+      "time": "10:50",
+      "customer": {
+        "name": "Kavita",
+        "phone": "7308294787438",
+        "address": "\ud83d\udccd Location: https://maps.google.com/?q=18.5893726299453,73.98142241999993"
+      }
+    },
+    {
+      "id": "WA-1768973647",
+      "owner": "kitchen1",
+      "items": "2x Special Veg Thali",
+      "total": 300,
+      "status": "New",
+      "time": "11:04 AM",
+      "customer": {
+        "name": "WhatsApp User",
+        "phone": "123",
+        "source": "WhatsApp"
+      }
+    }
+  ]
+}
