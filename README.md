@@ -24,7 +24,7 @@ TiffinFlow is a SaaS platform designed for home kitchens to manage menus, orders
     ```
 3.  **Install Dependencies**:
     ```bash
-    pip install google-generativeai psycopg2-binary
+    pip install google-generativeai psycopg2-binary PyJWT bcrypt
     ```
 4.  **Database Setup**:
     ```bash
@@ -65,7 +65,7 @@ TiffinFlow is a SaaS platform designed for home kitchens to manage menus, orders
 
 - [ ] **Real WhatsApp Integration**: Connect to WhatsApp Business API (Twilio/Meta) instead of the simulator.
 - [ ] **Database Migration**: Move from `db.json` to a real database (PostgreSQL/MongoDB) for scalability.
-- [ ] **Authentication**: Implement secure JWT-based authentication for kitchen owners.
+- [x] **Authentication**: Implement secure JWT-based authentication for kitchen owners.
 - [ ] **Payment Gateway**: Integrate Razorpay/Stripe for online payments.
 
 ## 🤝 Contribution Guide

@@ -19,6 +19,7 @@
 
         function TiffinFlowMaster() {
             const [user, setUser] = useState(null);
+            const [token, setToken] = useState(localStorage.getItem('token'));
             const [selectedKitchen, setSelectedKitchen] = useState(null);
             const [activeTab, setActiveTab] = useState('menu');
             const [loginData, setLoginData] = useState({ user: '', pass: '' });
@@ -76,30 +77,45 @@
             useEffect(() => {
                 if (!selectedKitchen) return;
 
-                // Fetch initial menu
+                // Fetch initial menu (Public)
                 fetch(`/api/menu?kitchenId=${selectedKitchen}`)
                     .then(res => res.json())
                     .then(data => {
                         if (data.length > 0) setMenu(data);
                     });
 
-                // Poll for orders
-                const interval = setInterval(() => {
-                    fetch(`/api/orders?kitchenId=${selectedKitchen}`)
-                        .then(res => res.json())
+                // Poll for orders (Protected)
+                if (!token) return;
+
+                const fetchOrders = () => {
+                    fetch(`/api/orders?kitchenId=${selectedKitchen}`, {
+                        headers: { 'Authorization': `Bearer ${token}` }
+                    })
+                        .then(res => {
+                            if (res.status === 401 || res.status === 403) {
+                                handleLogout();
+                                return [];
+                            }
+                            return res.json();
+                        })
                         .then(data => {
-                            // Merge with existing orders to avoid overwriting local status changes if any (simple version: just replace)
-                            setOrders(data.reverse()); // Show newest first
+                            if (Array.isArray(data)) setOrders(data);
                         });
-                }, 5000);
+                };
+
+                fetchOrders(); // Initial fetch
+                const interval = setInterval(fetchOrders, 5000);
 
                 return () => clearInterval(interval);
-            }, [selectedKitchen]);
+            }, [selectedKitchen, token]);
 
             const saveMenuToServer = (newMenu) => {
                 fetch('/api/menu', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${token}`
+                    },
                     body: JSON.stringify({ kitchenId: selectedKitchen, menu: newMenu })
                 });
             };
@@ -125,7 +141,10 @@
                 try {
                     const res = await fetch('/api/generate', {
                         method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': `Bearer ${token}`
+                        },
                         body: JSON.stringify({ dish_name: newItem.name })
                     });
                     const data = await res.json();
@@ -141,18 +160,33 @@
             };
 
             // --- AUTH LOGIC ---
-            const handleLogin = (e) => {
+            const handleLogin = async (e) => {
                 e.preventDefault();
-                if (loginData.user === 'admin' && loginData.pass === '123') {
-                    setUser({ id: 'admin', role: 'SUPER_ADMIN', name: 'SaaS Owner' });
-                } else if (loginData.user === 'kitchen1' && loginData.pass === '123') {
-                    setUser({ id: 'kitchen1', role: 'KITCHEN_OWNER', name: 'Annapurna Kitchen' });
-                    setSelectedKitchen('kitchen1');
-                } else { alert("Invalid Credentials!"); }
+                try {
+                    const res = await fetch('/api/login', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ username: loginData.user, password: loginData.pass })
+                    });
+
+                    if (!res.ok) throw new Error("Invalid Credentials");
+
+                    const data = await res.json();
+                    setToken(data.token);
+                    localStorage.setItem('token', data.token);
+
+                    // Set User State
+                    setUser({ id: data.kitchenId, role: 'KITCHEN_OWNER', name: 'Annapurna Kitchen' }); // Name hardcoded for now or fetch from DB later
+                    setSelectedKitchen(data.kitchenId);
+                } catch (err) {
+                    alert(err.message);
+                }
             };
 
             const handleLogout = () => {
                 setUser(null);
+                setToken(null);
+                localStorage.removeItem('token');
                 setSelectedKitchen(null);
                 setLoginData({ user: '', pass: '' });
             };

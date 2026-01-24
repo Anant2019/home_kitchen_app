@@ -1,11 +1,12 @@
 import psycopg2
 import json
 import os
+import bcrypt
 from datetime import datetime
 
 # Database Configuration
 DB_NAME = "postgres"
-DB_USER = "kavitasingh" # Default user on mac usually matches system user or is 'postgres'
+DB_USER = "kavitasingh"
 DB_PASS = ""
 DB_HOST = "localhost"
 DB_PORT = "5432"
@@ -39,7 +40,8 @@ def setup_database():
     cur.execute("""
         CREATE TABLE kitchens (
             id VARCHAR(50) PRIMARY KEY,
-            name VARCHAR(100) NOT NULL
+            name VARCHAR(100) NOT NULL,
+            password_hash TEXT NOT NULL
         );
     """)
 
@@ -77,9 +79,12 @@ def setup_database():
         with open('db.json', 'r') as f:
             data = json.load(f)
 
-        # Seed Kitchens (Infer from data or hardcode for now since db.json structure is simple)
-        # We know we have 'kitchen1'
-        cur.execute("INSERT INTO kitchens (id, name) VALUES (%s, %s)", ('kitchen1', 'Annapurna Kitchen'))
+        # Seed Kitchens
+        # Hardcode password '123' for kitchen1
+        password = "123"
+        hashed = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+        
+        cur.execute("INSERT INTO kitchens (id, name, password_hash) VALUES (%s, %s, %s)", ('kitchen1', 'Annapurna Kitchen', hashed))
 
         # Seed Menu
         menus = data.get('menus', {}).get('kitchen1', [])
@@ -92,9 +97,6 @@ def setup_database():
         # Seed Orders
         orders = data.get('orders', [])
         for order in orders:
-            # Handle time format if needed, but for now we just store it in customer_json or ignore exact timestamp match for old orders
-            # The schema has created_at, we can leave it as NOW() for migrated orders or try to parse
-            
             customer_data = json.dumps(order.get('customer', {}))
             
             cur.execute("""

@@ -4,8 +4,10 @@ import json
 import google.generativeai as genai
 import os
 import psycopg2
+import bcrypt
+import jwt
 from urllib.parse import urlparse, parse_qs
-from datetime import datetime
+from datetime import datetime, timedelta
 
 # Configure Gemini
 # Using the first key from user memory
@@ -26,6 +28,7 @@ model = genai.GenerativeModel(
 )
 
 PORT = 8001
+JWT_SECRET = "supersecretkey" # In prod, use env var
 
 # Database Configuration
 DB_NAME = "postgres"
@@ -44,6 +47,19 @@ def get_db_connection():
             return None
 
 class MyHandler(http.server.SimpleHTTPRequestHandler):
+    def validate_token(self):
+        auth_header = self.headers.get('Authorization')
+        if not auth_header or not auth_header.startswith('Bearer '):
+            return None
+        token = auth_header.split(' ')[1]
+        try:
+            payload = jwt.decode(token, JWT_SECRET, algorithms=['HS256'])
+            return payload
+        except jwt.ExpiredSignatureError:
+            return None
+        except jwt.InvalidTokenError:
+            return None
+
     def do_GET(self):
         parsed_path = urlparse(self.path)
         query_params = parse_qs(parsed_path.query)
@@ -87,9 +103,20 @@ class MyHandler(http.server.SimpleHTTPRequestHandler):
             return
 
         elif parsed_path.path == '/api/orders':
+            # Protected Route: Only Kitchen Owner can view all orders
+            user = self.validate_token()
+            if not user:
+                self.send_error(401, "Unauthorized")
+                return
+
             kitchen_id = query_params.get('kitchenId', [None])[0]
             if not kitchen_id:
                 self.send_error(400, "Missing kitchenId")
+                return
+            
+            # Ensure user owns this kitchen
+            if user.get('kitchen_id') != kitchen_id:
+                self.send_error(403, "Forbidden")
                 return
 
             conn = get_db_connection()
@@ -137,7 +164,59 @@ class MyHandler(http.server.SimpleHTTPRequestHandler):
         super().do_GET()
 
     def do_POST(self):
-        if self.path == '/api/generate':
+        if self.path == '/api/login':
+            content_length = int(self.headers['Content-Length'])
+            post_data = self.rfile.read(content_length)
+            data = json.loads(post_data.decode('utf-8'))
+            
+            username = data.get('username')
+            password = data.get('password')
+
+            if not username or not password:
+                self.send_error(400, "Missing credentials")
+                return
+
+            conn = get_db_connection()
+            if not conn:
+                self.send_error(500, "Database connection failed")
+                return
+
+            try:
+                cur = conn.cursor()
+                cur.execute("SELECT id, password_hash FROM kitchens WHERE id = %s", (username,))
+                row = cur.fetchone()
+                
+                if row:
+                    stored_hash = row[1].encode('utf-8')
+                    if bcrypt.checkpw(password.encode('utf-8'), stored_hash):
+                        # Generate Token
+                        token = jwt.encode({
+                            'kitchen_id': row[0],
+                            'exp': datetime.utcnow() + timedelta(hours=24)
+                        }, JWT_SECRET, algorithm='HS256')
+                        
+                        self.send_response(200)
+                        self.send_header('Content-type', 'application/json')
+                        self.end_headers()
+                        self.wfile.write(json.dumps({"token": token, "kitchenId": row[0]}).encode('utf-8'))
+                        return
+                
+                self.send_error(401, "Invalid credentials")
+            except Exception as e:
+                print(f"Login Error: {e}")
+                self.send_error(500, str(e))
+            finally:
+                cur.close()
+                conn.close()
+            return
+
+        elif self.path == '/api/generate':
+            # Protected Route
+            user = self.validate_token()
+            if not user:
+                self.send_error(401, "Unauthorized")
+                return
+
             content_length = int(self.headers['Content-Length'])
             post_data = self.rfile.read(content_length)
             data = json.loads(post_data.decode('utf-8'))
@@ -170,6 +249,12 @@ class MyHandler(http.server.SimpleHTTPRequestHandler):
             return
 
         elif self.path == '/api/menu':
+            # Protected Route (Update Menu)
+            user = self.validate_token()
+            if not user:
+                self.send_error(401, "Unauthorized")
+                return
+
             content_length = int(self.headers['Content-Length'])
             post_data = self.rfile.read(content_length)
             data = json.loads(post_data.decode('utf-8'))
@@ -179,6 +264,10 @@ class MyHandler(http.server.SimpleHTTPRequestHandler):
 
             if not kitchen_id or menu_items is None:
                 self.send_error(400, "Missing kitchenId or menu")
+                return
+            
+            if user.get('kitchen_id') != kitchen_id:
+                self.send_error(403, "Forbidden")
                 return
 
             conn = get_db_connection()
