@@ -14,7 +14,9 @@ TiffinFlow is a SaaS platform designed for home kitchens to manage menus, orders
 
 ## 🛠️ Setup & Installation
 
-1.  **Prerequisites**: Python 3.x installed.
+1.  **Prerequisites**:
+    - Python 3.x installed.
+    - PostgreSQL installed and running (`brew install postgresql` on Mac).
 2.  **Clone the Repository**:
     ```bash
     git clone https://github.com/Anant2019/home_kitchen_app.git
@@ -22,9 +24,13 @@ TiffinFlow is a SaaS platform designed for home kitchens to manage menus, orders
     ```
 3.  **Install Dependencies**:
     ```bash
-    pip install google-generativeai
+    pip install google-generativeai psycopg2-binary
     ```
-4.  **Run the Server**:
+4.  **Database Setup**:
+    ```bash
+    python3 setup_db.py
+    ```
+5.  **Run the Server**:
     ```bash
     python3 server.py
     ```
