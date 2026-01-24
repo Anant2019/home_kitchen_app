@@ -36,12 +36,15 @@ def setup_database():
     cur.execute("DROP TABLE IF EXISTS kitchens;")
 
     print("Creating tables...")
-    # Kitchens Table
+    # Kitchens Table (with Razorpay credentials for multi-restaurant payments)
     cur.execute("""
         CREATE TABLE kitchens (
             id VARCHAR(50) PRIMARY KEY,
             name VARCHAR(100) NOT NULL,
-            password_hash TEXT NOT NULL
+            password_hash TEXT NOT NULL,
+            razorpay_key_id VARCHAR(100),
+            razorpay_key_secret VARCHAR(100),
+            payments_enabled BOOLEAN DEFAULT FALSE
         );
     """)
 
@@ -57,7 +60,7 @@ def setup_database():
         );
     """)
 
-    # Orders Table
+    # Orders Table (with payment tracking)
     cur.execute("""
         CREATE TABLE orders (
             id VARCHAR(50) PRIMARY KEY,
@@ -66,7 +69,11 @@ def setup_database():
             total INTEGER NOT NULL,
             status VARCHAR(20) NOT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            customer_json JSONB
+            customer_json JSONB,
+            payment_method VARCHAR(20) DEFAULT 'COD',
+            payment_status VARCHAR(20) DEFAULT 'pending',
+            razorpay_order_id VARCHAR(100),
+            razorpay_payment_id VARCHAR(100)
         );
     """)
 

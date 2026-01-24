@@ -6,6 +6,11 @@ import os
 import psycopg2
 import bcrypt
 import jwt
+import hashlib
+import hmac
+import base64
+import urllib.request
+import ssl
 from urllib.parse import urlparse, parse_qs
 from datetime import datetime, timedelta
 
@@ -160,6 +165,90 @@ class MyHandler(http.server.SimpleHTTPRequestHandler):
                 conn.close()
             return
 
+        elif parsed_path.path == '/api/kitchen/settings':
+            # Protected Route: Kitchen owner can view their settings
+            user = self.validate_token()
+            if not user:
+                self.send_error(401, "Unauthorized")
+                return
+
+            kitchen_id = user.get('kitchen_id')
+            
+            conn = get_db_connection()
+            if not conn:
+                self.send_error(500, "Database connection failed")
+                return
+
+            try:
+                cur = conn.cursor()
+                cur.execute("""
+                    SELECT razorpay_key_id, razorpay_key_secret, payments_enabled 
+                    FROM kitchens WHERE id = %s
+                """, (kitchen_id,))
+                row = cur.fetchone()
+                
+                if row:
+                    # Mask the secret for display (show only last 4 chars)
+                    secret = row[1] or ""
+                    masked_secret = ("*" * (len(secret) - 4) + secret[-4:]) if len(secret) > 4 else ""
+                    
+                    self.send_response(200)
+                    self.send_header('Content-type', 'application/json')
+                    self.end_headers()
+                    self.wfile.write(json.dumps({
+                        "razorpay_key_id": row[0] or "",
+                        "razorpay_key_secret_masked": masked_secret,
+                        "payments_enabled": row[2] or False
+                    }).encode('utf-8'))
+                else:
+                    self.send_error(404, "Kitchen not found")
+            except Exception as e:
+                print(f"DB Error: {e}")
+                self.send_error(500, str(e))
+            finally:
+                cur.close()
+                conn.close()
+            return
+
+        elif parsed_path.path == '/api/kitchen/payment-info':
+            # Public Route: Customer can check if kitchen has online payments enabled
+            kitchen_id = query_params.get('kitchenId', [None])[0]
+            if not kitchen_id:
+                self.send_error(400, "Missing kitchenId")
+                return
+            
+            conn = get_db_connection()
+            if not conn:
+                self.send_error(500, "Database connection failed")
+                return
+
+            try:
+                cur = conn.cursor()
+                cur.execute("""
+                    SELECT razorpay_key_id, payments_enabled 
+                    FROM kitchens WHERE id = %s
+                """, (kitchen_id,))
+                row = cur.fetchone()
+                
+                if row:
+                    # Only return key_id if payments are enabled (customer needs this for checkout)
+                    self.send_response(200)
+                    self.send_header('Content-type', 'application/json')
+                    self.end_headers()
+                    self.wfile.write(json.dumps({
+                        "payments_enabled": row[1] or False,
+                        "razorpay_key_id": row[0] if row[1] else None
+                    }).encode('utf-8'))
+                else:
+                    self.send_error(404, "Kitchen not found")
+            except Exception as e:
+                print(f"DB Error: {e}")
+                self.send_error(500, str(e))
+            finally:
+                cur.close()
+                conn.close()
+            return
+
         # Serve static files (default behavior)
         super().do_GET()
 
@@ -301,6 +390,206 @@ class MyHandler(http.server.SimpleHTTPRequestHandler):
                 conn.close()
             return
 
+        elif self.path == '/api/kitchen/settings':
+            # Protected Route: Save Razorpay settings
+            user = self.validate_token()
+            if not user:
+                self.send_error(401, "Unauthorized")
+                return
+
+            content_length = int(self.headers['Content-Length'])
+            post_data = self.rfile.read(content_length)
+            data = json.loads(post_data.decode('utf-8'))
+            
+            kitchen_id = user.get('kitchen_id')
+            razorpay_key_id = data.get('razorpay_key_id')
+            razorpay_key_secret = data.get('razorpay_key_secret')
+            payments_enabled = data.get('payments_enabled', False)
+
+            conn = get_db_connection()
+            if not conn:
+                self.send_error(500, "Database connection failed")
+                return
+
+            try:
+                cur = conn.cursor()
+                
+                # Only update secret if a new one is provided (not the masked version)
+                if razorpay_key_secret and not razorpay_key_secret.startswith("*"):
+                    cur.execute("""
+                        UPDATE kitchens 
+                        SET razorpay_key_id = %s, razorpay_key_secret = %s, payments_enabled = %s
+                        WHERE id = %s
+                    """, (razorpay_key_id, razorpay_key_secret, payments_enabled, kitchen_id))
+                else:
+                    # Just update key_id and enabled status
+                    cur.execute("""
+                        UPDATE kitchens 
+                        SET razorpay_key_id = %s, payments_enabled = %s
+                        WHERE id = %s
+                    """, (razorpay_key_id, payments_enabled, kitchen_id))
+                
+                conn.commit()
+
+                self.send_response(200)
+                self.send_header('Content-type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps({"status": "success"}).encode('utf-8'))
+            except Exception as e:
+                print(f"DB Error: {e}")
+                conn.rollback()
+                self.send_error(500, str(e))
+            finally:
+                cur.close()
+                conn.close()
+            return
+
+        elif self.path == '/api/create-razorpay-order':
+            # Create Razorpay order using kitchen's credentials
+            content_length = int(self.headers['Content-Length'])
+            post_data = self.rfile.read(content_length)
+            data = json.loads(post_data.decode('utf-8'))
+            
+            kitchen_id = data.get('kitchenId')
+            amount = data.get('amount')  # Amount in paise (INR * 100)
+            
+            if not kitchen_id or not amount:
+                self.send_error(400, "Missing kitchenId or amount")
+                return
+
+            conn = get_db_connection()
+            if not conn:
+                self.send_error(500, "Database connection failed")
+                return
+
+            try:
+                cur = conn.cursor()
+                cur.execute("""
+                    SELECT razorpay_key_id, razorpay_key_secret, payments_enabled 
+                    FROM kitchens WHERE id = %s
+                """, (kitchen_id,))
+                row = cur.fetchone()
+                
+                if not row or not row[2]:  # payments_enabled
+                    self.send_error(400, "Online payments not enabled for this kitchen")
+                    return
+                
+                key_id = row[0]
+                key_secret = row[1]
+                
+                if not key_id or not key_secret:
+                    self.send_error(400, "Razorpay not configured for this kitchen")
+                    return
+                
+                # Create Razorpay order via API
+                order_data = json.dumps({
+                    "amount": int(amount),
+                    "currency": "INR",
+                    "receipt": f"rcpt_{int(datetime.now().timestamp())}"
+                }).encode('utf-8')
+                
+                credentials = base64.b64encode(f"{key_id}:{key_secret}".encode()).decode()
+                
+                req = urllib.request.Request(
+                    "https://api.razorpay.com/v1/orders",
+                    data=order_data,
+                    headers={
+                        "Content-Type": "application/json",
+                        "Authorization": f"Basic {credentials}"
+                    }
+                )
+                
+                # Create SSL context that bypasses verification (for dev on macOS)
+                ssl_context = ssl.create_default_context()
+                ssl_context.check_hostname = False
+                ssl_context.verify_mode = ssl.CERT_NONE
+                
+                with urllib.request.urlopen(req, context=ssl_context) as response:
+                    rz_order = json.loads(response.read().decode())
+                
+                self.send_response(200)
+                self.send_header('Content-type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps({
+                    "order_id": rz_order.get("id"),
+                    "amount": rz_order.get("amount"),
+                    "currency": rz_order.get("currency"),
+                    "key_id": key_id
+                }).encode('utf-8'))
+                
+            except urllib.error.HTTPError as e:
+                print(f"Razorpay API Error: {e.read().decode()}")
+                self.send_error(500, "Failed to create Razorpay order")
+            except Exception as e:
+                print(f"Error: {e}")
+                self.send_error(500, str(e))
+            finally:
+                cur.close()
+                conn.close()
+            return
+
+        elif self.path == '/api/verify-payment':
+            # Verify Razorpay payment signature
+            content_length = int(self.headers['Content-Length'])
+            post_data = self.rfile.read(content_length)
+            data = json.loads(post_data.decode('utf-8'))
+            
+            kitchen_id = data.get('kitchenId')
+            razorpay_order_id = data.get('razorpay_order_id')
+            razorpay_payment_id = data.get('razorpay_payment_id')
+            razorpay_signature = data.get('razorpay_signature')
+            
+            if not all([kitchen_id, razorpay_order_id, razorpay_payment_id, razorpay_signature]):
+                self.send_error(400, "Missing payment verification data")
+                return
+
+            conn = get_db_connection()
+            if not conn:
+                self.send_error(500, "Database connection failed")
+                return
+
+            try:
+                cur = conn.cursor()
+                cur.execute("SELECT razorpay_key_secret FROM kitchens WHERE id = %s", (kitchen_id,))
+                row = cur.fetchone()
+                
+                if not row or not row[0]:
+                    self.send_error(400, "Kitchen not configured for payments")
+                    return
+                
+                key_secret = row[0]
+                
+                # Verify signature
+                message = f"{razorpay_order_id}|{razorpay_payment_id}"
+                expected_signature = hmac.new(
+                    key_secret.encode(),
+                    message.encode(),
+                    hashlib.sha256
+                ).hexdigest()
+                
+                if expected_signature == razorpay_signature:
+                    self.send_response(200)
+                    self.send_header('Content-type', 'application/json')
+                    self.end_headers()
+                    self.wfile.write(json.dumps({
+                        "verified": True,
+                        "razorpay_order_id": razorpay_order_id,
+                        "razorpay_payment_id": razorpay_payment_id
+                    }).encode('utf-8'))
+                else:
+                    self.send_response(400)
+                    self.send_header('Content-type', 'application/json')
+                    self.end_headers()
+                    self.wfile.write(json.dumps({"verified": False, "error": "Signature mismatch"}).encode('utf-8'))
+                    
+            except Exception as e:
+                print(f"Error: {e}")
+                self.send_error(500, str(e))
+            finally:
+                cur.close()
+                conn.close()
+            return
+
         elif self.path == '/api/orders':
             content_length = int(self.headers['Content-Length'])
             post_data = self.rfile.read(content_length)
@@ -320,10 +609,16 @@ class MyHandler(http.server.SimpleHTTPRequestHandler):
                 cur = conn.cursor()
                 customer_json = json.dumps(order_data.get('customer', {}))
                 
+                # Payment fields
+                payment_method = order_data.get('payment_method', 'COD')
+                payment_status = order_data.get('payment_status', 'pending')
+                razorpay_order_id = order_data.get('razorpay_order_id')
+                razorpay_payment_id = order_data.get('razorpay_payment_id')
+                
                 cur.execute("""
-                    INSERT INTO orders (id, kitchen_id, items_summary, total, status, customer_json)
-                    VALUES (%s, %s, %s, %s, %s, %s)
-                """, (order_data['id'], order_data['owner'], order_data['items'], order_data['total'], order_data['status'], customer_json))
+                    INSERT INTO orders (id, kitchen_id, items_summary, total, status, customer_json, payment_method, payment_status, razorpay_order_id, razorpay_payment_id)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """, (order_data['id'], order_data['owner'], order_data['items'], order_data['total'], order_data['status'], customer_json, payment_method, payment_status, razorpay_order_id, razorpay_payment_id))
                 
                 conn.commit()
 

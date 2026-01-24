@@ -5,23 +5,124 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>TiffinFlow - Order Food</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap"
+        rel="stylesheet">
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;700;900&display=swap" rel="stylesheet">
+    <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
     <style>
-        body {
-            font-family: 'Outfit', sans-serif;
+        * {
+            font-family: 'Plus Jakarta Sans', sans-serif;
+        }
+
+        @keyframes fadeInUp {
+            from {
+                opacity: 0;
+                transform: translateY(20px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        @keyframes scaleIn {
+            from {
+                opacity: 0;
+                transform: scale(0.95);
+            }
+
+            to {
+                opacity: 1;
+                transform: scale(1);
+            }
+        }
+
+        @keyframes bounce {
+
+            0%,
+            100% {
+                transform: translateY(-5%);
+            }
+
+            50% {
+                transform: translateY(0);
+            }
+        }
+
+        .animate-fadeInUp {
+            animation: fadeInUp 0.4s ease-out forwards;
+        }
+
+        .animate-scaleIn {
+            animation: scaleIn 0.3s ease-out forwards;
+        }
+
+        .animate-bounce-subtle {
+            animation: bounce 2s ease-in-out infinite;
+        }
+
+        .glass {
+            background: rgba(255, 255, 255, 0.03);
+            backdrop-filter: blur(16px);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+        }
+
+        .card-hover {
+            transition: all 0.2s ease;
+        }
+
+        .card-hover:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4);
         }
     </style>
 </head>
 
-<body class="bg-slate-950 text-slate-100">
+<body class="bg-neutral-950 text-neutral-100">
     <div id="root"></div>
 
     <script type="text/babel">
-        const { useState, useEffect } = React;
+        const { useState, useEffect, useCallback } = React;
+
+        // LocalStorage key for customer profiles
+        const CUSTOMER_STORAGE_KEY = 'tiffinflow_customers';
+
+        // Helper: Get all saved customers from localStorage
+        const getSavedCustomers = () => {
+            try {
+                const data = localStorage.getItem(CUSTOMER_STORAGE_KEY);
+                return data ? JSON.parse(data) : {};
+            } catch (e) {
+                console.error('Error reading localStorage:', e);
+                return {};
+            }
+        };
+
+        // Helper: Save customer to localStorage (keyed by phone)
+        const saveCustomerToStorage = (phone, customerData) => {
+            try {
+                const customers = getSavedCustomers();
+                customers[phone] = {
+                    ...customerData,
+                    lastOrderDate: new Date().toISOString()
+                };
+                localStorage.setItem(CUSTOMER_STORAGE_KEY, JSON.stringify(customers));
+            } catch (e) {
+                console.error('Error saving to localStorage:', e);
+            }
+        };
+
+        // Helper: Lookup customer by phone
+        const lookupCustomerByPhone = (phone) => {
+            const customers = getSavedCustomers();
+            return customers[phone] || null;
+        };
 
         function CustomerApp() {
             const [menu, setMenu] = useState([]);
@@ -34,9 +135,25 @@
             const [showCheckoutModal, setShowCheckoutModal] = useState(false);
             const [customerName, setCustomerName] = useState('');
             const [customerPhone, setCustomerPhone] = useState('');
-            const [address, setAddress] = useState('');
+            // Structured Address Fields
+            const [flatNo, setFlatNo] = useState('');
+            const [societyName, setSocietyName] = useState('');
+            const [area, setArea] = useState('');
+            const [pincode, setPincode] = useState('');
+            const [gpsLocation, setGpsLocation] = useState('');
             const [obtainingLocation, setObtainingLocation] = useState(false);
 
+            // Returning customer detection
+            const [isReturningCustomer, setIsReturningCustomer] = useState(false);
+            const [savedCustomerData, setSavedCustomerData] = useState(null);
+
+            // Payment State
+            const [paymentMethod, setPaymentMethod] = useState('COD'); // 'COD' or 'ONLINE'
+            const [paymentsEnabled, setPaymentsEnabled] = useState(false);
+            const [razorpayKeyId, setRazorpayKeyId] = useState(null);
+            const [processingPayment, setProcessingPayment] = useState(false);
+
+            // Load menu on mount
             useEffect(() => {
                 const params = new URLSearchParams(window.location.search);
                 const kId = params.get('kitchenId');
@@ -46,13 +163,75 @@
                 } else {
                     setLoading(false);
                 }
+
+                // Try to auto-load last used phone from localStorage
+                const customers = getSavedCustomers();
+                const phones = Object.keys(customers);
+                if (phones.length > 0) {
+                    // Get the most recently used customer
+                    const sortedPhones = phones.sort((a, b) => {
+                        const dateA = new Date(customers[a].lastOrderDate || 0);
+                        const dateB = new Date(customers[b].lastOrderDate || 0);
+                        return dateB - dateA;
+                    });
+                    const lastPhone = sortedPhones[0];
+                    const lastCustomer = customers[lastPhone];
+                    if (lastCustomer) {
+                        // Auto-fill for returning customer
+                        setCustomerPhone(lastPhone);
+                        autoFillCustomerData(lastCustomer);
+                        setIsReturningCustomer(true);
+                        setSavedCustomerData(lastCustomer);
+                    }
+                }
             }, []);
+
+            // Auto-fill function
+            const autoFillCustomerData = (data) => {
+                if (data.name) setCustomerName(data.name);
+                if (data.flatNo) setFlatNo(data.flatNo);
+                if (data.societyName) setSocietyName(data.societyName);
+                if (data.area) setArea(data.area);
+                if (data.pincode) setPincode(data.pincode);
+                if (data.gpsLocation) setGpsLocation(data.gpsLocation);
+            };
+
+            // Phone number change handler - lookup customer when phone is 10 digits
+            const handlePhoneChange = (value) => {
+                const cleanPhone = value.replace(/\D/g, '').slice(0, 10);
+                setCustomerPhone(cleanPhone);
+
+                // Look up customer when phone is 10 digits
+                if (cleanPhone.length === 10) {
+                    const existingCustomer = lookupCustomerByPhone(cleanPhone);
+                    if (existingCustomer) {
+                        autoFillCustomerData(existingCustomer);
+                        setIsReturningCustomer(true);
+                        setSavedCustomerData(existingCustomer);
+                    } else {
+                        // New customer - clear the returning flag but keep any entered data
+                        setIsReturningCustomer(false);
+                        setSavedCustomerData(null);
+                    }
+                } else {
+                    setIsReturningCustomer(false);
+                    setSavedCustomerData(null);
+                }
+            };
 
             const fetchMenu = async (kId) => {
                 try {
                     const res = await fetch(`/api/menu?kitchenId=${kId}`);
                     const data = await res.json();
                     setMenu(data);
+
+                    // Fetch payment info for this kitchen
+                    const paymentRes = await fetch(`/api/kitchen/payment-info?kitchenId=${kId}`);
+                    const paymentData = await paymentRes.json();
+                    if (paymentData.payments_enabled && paymentData.razorpay_key_id) {
+                        setPaymentsEnabled(true);
+                        setRazorpayKeyId(paymentData.razorpay_key_id);
+                    }
                 } catch (e) {
                     console.error("Failed to fetch menu", e);
                 } finally {
@@ -84,13 +263,15 @@
                 return total + (item ? item.price * qty : 0);
             }, 0);
 
+            const cartCount = Object.values(cart).reduce((a, b) => a + b, 0);
+
             const handleLocation = () => {
                 if (!navigator.geolocation) return alert("Geolocation is not supported by your browser");
                 setObtainingLocation(true);
                 navigator.geolocation.getCurrentPosition((position) => {
                     const { latitude, longitude } = position.coords;
                     const mapsLink = `https://maps.google.com/?q=${latitude},${longitude}`;
-                    setAddress(prev => `${prev ? prev + '\n' : ''}📍 Location: ${mapsLink}`.trim());
+                    setGpsLocation(mapsLink);
                     setObtainingLocation(false);
                 }, () => {
                     alert("Unable to retrieve your location");
@@ -98,81 +279,214 @@
                 });
             };
 
-            const placeOrder = async () => {
-                if (!customerName || !customerPhone || !address) return alert("Please fill all details including address");
+            // Build full address string
+            const buildFullAddress = () => {
+                let parts = [];
+                if (flatNo) parts.push(`Flat/House: ${flatNo}`);
+                if (societyName) parts.push(`Society: ${societyName}`);
+                if (area) parts.push(`Area: ${area}`);
+                if (pincode) parts.push(`Pincode: ${pincode}`);
+                if (gpsLocation) parts.push(`📍 Location: ${gpsLocation}`);
+                return parts.join(', ');
+            };
 
+            const placeOrder = async () => {
+                if (!customerName || !customerPhone || !flatNo || !societyName || !area || !pincode) {
+                    return alert("Please fill all required fields (Name, Phone, Address details)");
+                }
+                const fullAddress = buildFullAddress();
                 const itemsSummary = Object.entries(cart).map(([id, qty]) => {
                     const item = menu.find(m => m.id.toString() === id);
                     return `${qty}x ${item.name}`;
                 }).join(', ');
 
                 const orderData = {
-                    id: `ORD-${Date.now().toString().slice(-4)}`,
+                    id: `ORD-${Date.now().toString().slice(-6)}`,
                     owner: kitchenId,
                     items: itemsSummary,
                     total: cartTotal,
                     status: 'New',
                     time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-                    customer: { name: customerName, phone: customerPhone, address: address }
+                    customer: { name: customerName, phone: customerPhone, address: fullAddress, flatNo, societyName, area, pincode, gpsLocation },
+                    payment_method: paymentMethod,
+                    payment_status: 'pending'
                 };
 
+                // COD Order - place directly
+                if (paymentMethod === 'COD' || !paymentsEnabled) {
+                    try {
+                        setProcessingPayment(true);
+                        const res = await fetch('/api/orders', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(orderData)
+                        });
+                        const data = await res.json();
+                        if (data.status === 'success') {
+                            saveCustomerToStorage(customerPhone, { name: customerName, flatNo, societyName, area, pincode, gpsLocation });
+                            setOrderPlaced(true);
+                            setCart({});
+                            setShowCheckoutModal(false);
+                        }
+                    } catch (e) {
+                        alert("Failed to place order");
+                    } finally {
+                        setProcessingPayment(false);
+                    }
+                    return;
+                }
+
+                // Online Payment - Razorpay flow
                 try {
-                    const res = await fetch('/api/orders', {
+                    setProcessingPayment(true);
+
+                    // 1. Create Razorpay order
+                    const rzOrderRes = await fetch('/api/create-razorpay-order', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(orderData)
+                        body: JSON.stringify({ kitchenId, amount: cartTotal * 100 })
                     });
-                    const data = await res.json();
-                    if (data.status === 'success') {
-                        setOrderPlaced(true);
-                        setCart({});
-                        setShowCheckoutModal(false);
-                        setCustomerName('');
-                        setCustomerPhone('');
-                        setAddress('');
+
+                    if (!rzOrderRes.ok) {
+                        const errData = await rzOrderRes.json();
+                        throw new Error(errData.error || 'Failed to create payment order');
                     }
+
+                    const rzOrderData = await rzOrderRes.json();
+                    setProcessingPayment(false);
+
+                    // 2. Open Razorpay checkout
+                    const options = {
+                        key: rzOrderData.key_id,
+                        amount: rzOrderData.amount,
+                        currency: rzOrderData.currency,
+                        name: 'TiffinFlow',
+                        description: itemsSummary.slice(0, 100),
+                        order_id: rzOrderData.order_id,
+                        handler: async function (response) {
+                            setProcessingPayment(true);
+                            // 3. Verify payment
+                            const verifyRes = await fetch('/api/verify-payment', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({
+                                    kitchenId,
+                                    razorpay_order_id: response.razorpay_order_id,
+                                    razorpay_payment_id: response.razorpay_payment_id,
+                                    razorpay_signature: response.razorpay_signature
+                                })
+                            });
+                            const verifyData = await verifyRes.json();
+
+                            if (verifyData.verified) {
+                                // 4. Place order with payment details
+                                const finalOrder = { ...orderData, payment_status: 'paid', razorpay_order_id: response.razorpay_order_id, razorpay_payment_id: response.razorpay_payment_id };
+                                const res = await fetch('/api/orders', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(finalOrder) });
+                                const data = await res.json();
+                                if (data.status === 'success') {
+                                    saveCustomerToStorage(customerPhone, { name: customerName, flatNo, societyName, area, pincode, gpsLocation });
+                                    setOrderPlaced(true);
+                                    setCart({});
+                                    setShowCheckoutModal(false);
+                                }
+                            } else {
+                                alert('Payment verification failed. Please contact support.');
+                            }
+                            setProcessingPayment(false);
+                        },
+                        modal: { ondismiss: () => setProcessingPayment(false) },
+                        prefill: { name: customerName, contact: customerPhone },
+                        theme: { color: '#f97316' }
+                    };
+
+                    const rzp = new window.Razorpay(options);
+                    rzp.open();
+
                 } catch (e) {
-                    alert("Failed to place order");
+                    console.error('Payment error:', e);
+                    alert(e.message || "Failed to initialize payment. Please try again.");
+                    setProcessingPayment(false);
                 }
             };
 
-            if (!kitchenId) return <div className="p-10 text-center font-bold text-xl text-white">Kitchen ID missing in URL</div>;
-            if (loading) return <div className="p-10 text-center text-white">Loading Menu...</div>;
+            if (!kitchenId) return (
+                <div className="min-h-screen flex items-center justify-center">
+                    <div className="text-center">
+                        <div className="text-5xl mb-4">🍽️</div>
+                        <h2 className="text-xl font-bold text-white mb-2">Kitchen ID Missing</h2>
+                        <p className="text-neutral-500">Please use a valid menu link</p>
+                    </div>
+                </div>
+            );
+
+            if (loading) return (
+                <div className="min-h-screen flex items-center justify-center">
+                    <div className="text-center">
+                        <div className="w-12 h-12 border-4 border-orange-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+                        <p className="text-neutral-400">Loading Menu...</p>
+                    </div>
+                </div>
+            );
 
             return (
-                <div className="max-w-md mx-auto min-h-screen bg-slate-950 shadow-2xl relative pb-32">
-                    {/* Header */}
-                    <div className="bg-slate-900/80 backdrop-blur-md text-white p-6 rounded-b-[2rem] shadow-lg sticky top-0 z-10 border-b border-slate-800">
-                        <h1 className="text-2xl font-black text-blue-500">Menu</h1>
-                        <p className="text-slate-400 text-sm">Select items to order</p>
+                <div className="max-w-md mx-auto min-h-screen bg-neutral-950 relative pb-32">
+                    {/* Hero Header */}
+                    <div className="relative h-48 overflow-hidden">
+                        <img src="https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=800" className="w-full h-full object-cover" alt="Food" />
+                        <div className="absolute inset-0 bg-gradient-to-b from-neutral-950/30 via-neutral-950/60 to-neutral-950"></div>
+                        <div className="absolute bottom-0 left-0 right-0 p-6">
+                            <div className="flex items-center gap-3">
+                                <div className="w-12 h-12 bg-gradient-to-br from-orange-500 to-red-600 rounded-2xl flex items-center justify-center shadow-lg">
+                                    <span className="text-2xl">🍱</span>
+                                </div>
+                                <div>
+                                    <h1 className="text-2xl font-bold text-white">Today's Menu</h1>
+                                    <p className="text-neutral-400 text-sm">Fresh homemade food</p>
+                                </div>
+                            </div>
+                        </div>
                     </div>
 
                     {/* Menu List */}
                     <div className="p-4 space-y-4">
                         {menu.length === 0 ? (
-                            <p className="text-center text-slate-500 py-10 font-bold uppercase tracking-widest text-xs">No items available yet.</p>
+                            <div className="text-center py-16">
+                                <div className="text-5xl mb-4">🍽️</div>
+                                <h3 className="text-lg font-semibold text-neutral-300">No dishes available</h3>
+                                <p className="text-neutral-500 text-sm">Check back later!</p>
+                            </div>
                         ) : (
-                            menu.map(item => (
-                                <div key={item.id} className="flex gap-4 p-3 rounded-[1.8rem] border border-slate-800 bg-slate-900/40 shadow-lg">
-                                    <img src={item.img} className="w-24 h-24 rounded-2xl object-cover shadow-md border border-slate-800" />
-                                    <div className="flex-1 flex flex-col justify-between">
-                                        <div>
-                                            <h3 className="font-bold text-slate-100">{item.name}</h3>
-                                            <p className="text-xs text-slate-400 line-clamp-2 leading-tight">{item.description}</p>
-                                        </div>
-                                        <div className="flex justify-between items-end mt-2">
-                                            <span className="font-black text-blue-500">₹{item.price}</span>
-                                            {cart[item.id] ? (
-                                                <div className="flex items-center gap-3 bg-slate-800 rounded-xl px-2 py-1 border border-slate-700">
-                                                    <button onClick={() => removeFromCart(item)} className="w-6 h-6 flex items-center justify-center bg-slate-700 rounded-full shadow text-sm font-bold text-white hover:bg-slate-600 transition">-</button>
-                                                    <span className="text-sm font-bold text-white">{cart[item.id]}</span>
-                                                    <button onClick={() => addToCart(item)} className="w-6 h-6 flex items-center justify-center bg-green-600 text-white rounded-full shadow text-sm font-bold hover:bg-green-500 transition">+</button>
-                                                </div>
-                                            ) : (
-                                                <button onClick={() => addToCart(item)} className="bg-slate-800 text-white px-4 py-1.5 rounded-xl text-xs font-bold uppercase tracking-wider shadow-lg active:scale-95 transition border border-slate-700 hover:border-blue-500">
-                                                    Add
-                                                </button>
-                                            )}
+                            menu.map((item, index) => (
+                                <div
+                                    key={item.id}
+                                    className="glass rounded-3xl overflow-hidden card-hover animate-fadeInUp"
+                                    style={{ animationDelay: `${index * 0.05}s` }}
+                                >
+                                    <div className="flex">
+                                        <img src={item.img} className="w-28 h-28 object-cover" alt={item.name} />
+                                        <div className="flex-1 p-4 flex flex-col justify-between">
+                                            <div>
+                                                <h3 className="font-bold text-white">{item.name}</h3>
+                                                <p className="text-neutral-400 text-xs line-clamp-2 mt-1">{item.description}</p>
+                                            </div>
+                                            <div className="flex justify-between items-center mt-2">
+                                                <span className="text-orange-500 font-bold text-lg">₹{item.price}</span>
+                                                {cart[item.id] ? (
+                                                    <div className="flex items-center gap-2 bg-neutral-900 rounded-full px-1 border border-neutral-800">
+                                                        <button onClick={() => removeFromCart(item)} className="w-8 h-8 flex items-center justify-center text-white hover:text-orange-500 transition">
+                                                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M20 12H4" strokeWidth="2.5" strokeLinecap="round" /></svg>
+                                                        </button>
+                                                        <span className="w-6 text-center font-bold text-white">{cart[item.id]}</span>
+                                                        <button onClick={() => addToCart(item)} className="w-8 h-8 flex items-center justify-center bg-gradient-to-r from-orange-500 to-red-600 text-white rounded-full">
+                                                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M12 6v12m6-6H6" strokeWidth="2.5" strokeLinecap="round" /></svg>
+                                                        </button>
+                                                    </div>
+                                                ) : (
+                                                    <button onClick={() => addToCart(item)} className="px-4 py-2 rounded-full text-sm font-semibold border border-orange-500/30 text-orange-500 hover:bg-orange-500/10 active:scale-95 transition">
+                                                        Add
+                                                    </button>
+                                                )}
+                                            </div>
                                         </div>
                                     </div>
                                 </div>
@@ -182,50 +496,151 @@
 
                     {/* Cart Footer */}
                     {Object.keys(cart).length > 0 && (
-                        <div className="fixed bottom-0 left-0 right-0 max-w-md mx-auto bg-slate-900/90 backdrop-blur-md border-t border-slate-800 p-6 rounded-t-[2rem] shadow-[0_-10px_40px_-15px_rgba(0,0,0,0.5)] z-20">
-                            <button onClick={() => setShowCheckoutModal(true)} className="w-full bg-green-600 text-white py-4 rounded-2xl font-black text-sm uppercase tracking-widest shadow-lg shadow-green-900/20 active:scale-95 transition flex justify-between px-6 hover:bg-green-500">
-                                <span>Proceed to Checkout</span>
-                                <span>₹{cartTotal}</span>
-                            </button>
+                        <div className="fixed bottom-0 left-0 right-0 z-30 max-w-md mx-auto animate-fadeInUp">
+                            <div className="bg-gradient-to-t from-neutral-950 via-neutral-950/95 to-transparent pt-6 pb-6 px-5">
+                                <button onClick={() => setShowCheckoutModal(true)} className="w-full bg-gradient-to-r from-orange-500 to-red-600 text-white py-4 rounded-2xl font-semibold shadow-lg shadow-orange-600/30 active:scale-[0.98] transition flex justify-between items-center px-5">
+                                    <div className="flex items-center gap-2">
+                                        <span className="w-6 h-6 bg-white/20 rounded-full flex items-center justify-center text-sm font-bold">{cartCount}</span>
+                                        <span>View Cart</span>
+                                    </div>
+                                    <span className="font-bold">₹{cartTotal}</span>
+                                </button>
+                            </div>
                         </div>
                     )}
 
-                    {/* Checkout Modal */}
+                    {/* Checkout Modal - Zomato/Swiggy Style */}
                     {showCheckoutModal && (
-                        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-200">
-                            <div className="bg-slate-900 w-full max-w-sm rounded-[2.5rem] border border-slate-800 p-6 shadow-2xl animate-in slide-in-from-bottom-10 duration-300">
-                                <div className="flex justify-between items-center mb-6">
-                                    <h3 className="text-xl font-black text-slate-100">Checkout</h3>
-                                    <button onClick={() => setShowCheckoutModal(false)} className="w-8 h-8 bg-slate-800 rounded-full flex items-center justify-center text-slate-400 hover:text-white transition">✕</button>
+                        <div className="fixed inset-0 z-50 bg-neutral-950 flex flex-col min-h-screen">
+                            {/* Header */}
+                            <div className="sticky top-0 z-10 bg-neutral-950 border-b border-neutral-800 px-4 py-3 flex items-center gap-3">
+                                <button onClick={() => setShowCheckoutModal(false)} className="w-10 h-10 rounded-full flex items-center justify-center text-neutral-400 hover:bg-neutral-800 transition">
+                                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M15 19l-7-7 7-7" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                                </button>
+                                <div className="flex-1">
+                                    <h2 className="text-lg font-bold text-white">Checkout</h2>
+                                    <p className="text-xs text-neutral-500">{cartCount} items • ₹{cartTotal}</p>
                                 </div>
+                            </div>
 
-                                <div className="space-y-4">
-                                    <input className="w-full bg-slate-800 p-4 rounded-2xl text-sm outline-none border border-slate-700 text-white placeholder-slate-500 focus:border-blue-500 transition" placeholder="Your Name" value={customerName} onChange={e => setCustomerName(e.target.value)} />
-                                    <input className="w-full bg-slate-800 p-4 rounded-2xl text-sm outline-none border border-slate-700 text-white placeholder-slate-500 focus:border-blue-500 transition" placeholder="Phone Number" type="tel" value={customerPhone} onChange={e => setCustomerPhone(e.target.value)} />
+                            {/* Scrollable Content */}
+                            <div className="flex-1 overflow-y-auto pb-32" style={{ WebkitOverflowScrolling: 'touch' }}>
+                                <div className="p-4 space-y-4">
 
-                                    <div className="relative">
-                                        <textarea className="w-full bg-slate-800 p-4 rounded-2xl text-sm outline-none border border-slate-700 text-white placeholder-slate-500 focus:border-blue-500 transition h-24 resize-none" placeholder="Delivery Address..." value={address} onChange={e => setAddress(e.target.value)}></textarea>
-                                        <button onClick={handleLocation} disabled={obtainingLocation} className="absolute bottom-3 right-3 bg-slate-700 text-xs text-blue-400 px-3 py-1.5 rounded-lg font-bold hover:bg-slate-600 transition flex items-center gap-1">
-                                            {obtainingLocation ? '...' : '📍 Use Current Location'}
-                                        </button>
+                                    {/* Returning Customer Compact Badge */}
+                                    {isReturningCustomer && (
+                                        <div className="flex items-center gap-2 bg-green-500/10 border border-green-500/30 rounded-lg px-3 py-2">
+                                            <span className="text-green-400 text-sm">👋 Welcome back, {customerName || 'friend'}!</span>
+                                            <button onClick={() => { setCustomerName(''); setFlatNo(''); setSocietyName(''); setArea(''); setPincode(''); setGpsLocation(''); setIsReturningCustomer(false); }} className="ml-auto text-xs text-neutral-400 hover:text-white">Change</button>
+                                        </div>
+                                    )}
+
+                                    {/* Contact Section */}
+                                    <div className="bg-neutral-900 rounded-xl overflow-hidden">
+                                        <div className="px-4 py-3 border-b border-neutral-800 flex items-center gap-2">
+                                            <svg className="w-4 h-4 text-orange-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" strokeWidth="2" strokeLinecap="round" /></svg>
+                                            <span className="text-sm font-semibold text-white">Contact Details</span>
+                                        </div>
+                                        <div className="p-4 grid grid-cols-2 gap-3">
+                                            <div className="relative col-span-2">
+                                                <input className="w-full bg-neutral-800 rounded-lg px-3 py-2.5 text-sm text-white placeholder-neutral-500 border border-neutral-700 focus:border-orange-500 outline-none" placeholder="Phone *" type="tel" inputMode="numeric" value={customerPhone} onChange={e => handlePhoneChange(e.target.value)} />
+                                                {customerPhone.length === 10 && isReturningCustomer && <div className="absolute right-3 top-1/2 -translate-y-1/2"><svg className="w-4 h-4 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M5 13l4 4L19 7" strokeWidth="2.5" strokeLinecap="round" /></svg></div>}
+                                            </div>
+                                            <input className="col-span-2 bg-neutral-800 rounded-lg px-3 py-2.5 text-sm text-white placeholder-neutral-500 border border-neutral-700 focus:border-orange-500 outline-none" placeholder="Name *" value={customerName} onChange={e => setCustomerName(e.target.value)} />
+                                        </div>
                                     </div>
 
-                                    <button onClick={placeOrder} className="w-full bg-green-600 py-4 rounded-2xl font-black text-sm uppercase tracking-widest shadow-lg shadow-green-900/20 active:scale-95 transition mt-2 hover:bg-green-500">
-                                        Confirm Order • ₹{cartTotal}
-                                    </button>
+                                    {/* Address Section - Compact Grid */}
+                                    <div className="bg-neutral-900 rounded-xl overflow-hidden">
+                                        <div className="px-4 py-3 border-b border-neutral-800 flex items-center justify-between">
+                                            <div className="flex items-center gap-2">
+                                                <svg className="w-4 h-4 text-orange-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" strokeWidth="2" strokeLinecap="round" /></svg>
+                                                <span className="text-sm font-semibold text-white">Delivery Address</span>
+                                            </div>
+                                            <button onClick={handleLocation} disabled={obtainingLocation} className={`text-xs px-2.5 py-1 rounded-full ${gpsLocation ? 'bg-green-500/20 text-green-400' : 'bg-orange-500/20 text-orange-400'}`}>
+                                                {obtainingLocation ? '...' : gpsLocation ? '📍 GPS Added' : '📍 Add GPS'}
+                                            </button>
+                                        </div>
+                                        <div className="p-4 grid grid-cols-2 gap-2">
+                                            <input className="bg-neutral-800 rounded-lg px-3 py-2.5 text-sm text-white placeholder-neutral-500 border border-neutral-700 focus:border-orange-500 outline-none" placeholder="Flat/Floor *" value={flatNo} onChange={e => setFlatNo(e.target.value)} />
+                                            <input className="bg-neutral-800 rounded-lg px-3 py-2.5 text-sm text-white placeholder-neutral-500 border border-neutral-700 focus:border-orange-500 outline-none" placeholder="Pincode *" type="text" inputMode="numeric" maxLength="6" value={pincode} onChange={e => setPincode(e.target.value.replace(/\D/g, '').slice(0, 6))} />
+                                            <input className="col-span-2 bg-neutral-800 rounded-lg px-3 py-2.5 text-sm text-white placeholder-neutral-500 border border-neutral-700 focus:border-orange-500 outline-none" placeholder="Building/Society *" value={societyName} onChange={e => setSocietyName(e.target.value)} />
+                                            <input className="col-span-2 bg-neutral-800 rounded-lg px-3 py-2.5 text-sm text-white placeholder-neutral-500 border border-neutral-700 focus:border-orange-500 outline-none" placeholder="Area/Landmark *" value={area} onChange={e => setArea(e.target.value)} />
+                                        </div>
+                                    </div>
+
+                                    {/* Payment Method - Horizontal Chips */}
+                                    {paymentsEnabled && (
+                                        <div className="bg-neutral-900 rounded-xl overflow-hidden">
+                                            <div className="px-4 py-3 border-b border-neutral-800 flex items-center gap-2">
+                                                <svg className="w-4 h-4 text-orange-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" strokeWidth="2" strokeLinecap="round" /></svg>
+                                                <span className="text-sm font-semibold text-white">Payment</span>
+                                            </div>
+                                            <div className="p-3 flex gap-2">
+                                                <button onClick={() => setPaymentMethod('COD')} className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-xl text-sm font-semibold transition ${paymentMethod === 'COD' ? 'bg-orange-500/20 border-2 border-orange-500 text-orange-400' : 'bg-neutral-800 border-2 border-neutral-700 text-neutral-400'}`}>
+                                                    💵 Cash
+                                                </button>
+                                                <button onClick={() => setPaymentMethod('ONLINE')} className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-xl text-sm font-semibold transition ${paymentMethod === 'ONLINE' ? 'bg-green-500/20 border-2 border-green-500 text-green-400' : 'bg-neutral-800 border-2 border-neutral-700 text-neutral-400'}`}>
+                                                    💳 Pay Online
+                                                </button>
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {/* Order Summary - Collapsible Style */}
+                                    <div className="bg-neutral-900 rounded-xl overflow-hidden">
+                                        <div className="px-4 py-3 border-b border-neutral-800 flex items-center gap-2">
+                                            <svg className="w-4 h-4 text-orange-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" strokeWidth="2" strokeLinecap="round" /></svg>
+                                            <span className="text-sm font-semibold text-white">Order Summary</span>
+                                            <span className="ml-auto text-xs text-neutral-500">{cartCount} items</span>
+                                        </div>
+                                        <div className="p-4 space-y-2">
+                                            {Object.entries(cart).map(([id, qty]) => {
+                                                const item = menu.find(m => m.id.toString() === id);
+                                                return (
+                                                    <div key={id} className="flex items-center justify-between text-sm">
+                                                        <div className="flex items-center gap-2">
+                                                            <span className="w-5 h-5 bg-neutral-800 rounded text-xs flex items-center justify-center text-orange-400">{qty}</span>
+                                                            <span className="text-neutral-300">{item?.name}</span>
+                                                        </div>
+                                                        <span className="text-white">₹{item?.price * qty}</span>
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    </div>
                                 </div>
+                            </div>
+
+                            {/* Sticky Bottom CTA */}
+                            <div className="fixed bottom-0 left-0 right-0 bg-neutral-950 border-t border-neutral-800 p-4">
+                                <div className="flex items-center justify-between mb-3">
+                                    <span className="text-neutral-400 text-sm">Total</span>
+                                    <span className="text-xl font-bold text-white">₹{cartTotal}</span>
+                                </div>
+                                <button onClick={placeOrder} disabled={processingPayment} className={`w-full py-4 rounded-xl font-bold text-white shadow-lg active:scale-[0.98] transition flex items-center justify-center gap-2 ${paymentMethod === 'ONLINE' && paymentsEnabled ? 'bg-gradient-to-r from-green-500 to-emerald-600' : 'bg-gradient-to-r from-orange-500 to-red-600'} disabled:opacity-50`}>
+                                    {processingPayment ? (
+                                        <><div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div> Processing...</>
+                                    ) : paymentMethod === 'ONLINE' && paymentsEnabled ? (
+                                        <>💳 Pay ₹{cartTotal}</>
+                                    ) : (
+                                        <>🛵 Place Order</>
+                                    )}
+                                </button>
                             </div>
                         </div>
                     )}
 
                     {/* Success Overlay */}
                     {orderPlaced && (
-                        <div className="fixed inset-0 z-50 flex items-center justify-center p-6 bg-slate-950/90 backdrop-blur-md animate-in fade-in duration-300">
+                        <div className="fixed inset-0 z-50 flex items-center justify-center p-6 bg-neutral-950/95 backdrop-blur-md animate-fadeInUp">
                             <div className="text-center">
-                                <div className="w-24 h-24 bg-green-500 rounded-full flex items-center justify-center text-white text-5xl mb-6 shadow-2xl mx-auto animate-bounce">🎉</div>
-                                <h2 className="text-4xl font-black text-white mb-2">Order Placed!</h2>
-                                <p className="text-slate-400 mb-8 text-lg">Thank you for ordering.<br />We'll contact you shortly.</p>
-                                <button onClick={() => setOrderPlaced(false)} className="bg-slate-800 text-blue-400 px-8 py-3 rounded-2xl font-bold hover:bg-slate-700 transition">
+                                <div className="w-24 h-24 bg-gradient-to-br from-green-500 to-emerald-600 rounded-3xl flex items-center justify-center text-white text-5xl mb-6 shadow-xl mx-auto animate-bounce-subtle">
+                                    ✓
+                                </div>
+                                <h2 className="text-3xl font-bold text-white mb-2">Order Placed!</h2>
+                                <p className="text-neutral-400 mb-8">Thank you for ordering.<br />We'll contact you shortly.</p>
+                                <button onClick={() => setOrderPlaced(false)} className="bg-neutral-800 text-orange-400 px-8 py-3 rounded-xl font-semibold hover:bg-neutral-700 transition border border-neutral-700">
                                     Order More
                                 </button>
                             </div>
