@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TiffinFlow Kitchen Admin</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-900 text-white min-h-screen flex items-center justify-center p-6">
+
+    <div class="max-w-md w-full bg-slate-800 p-8 rounded-3xl shadow-2xl border border-slate-700">
+        <h1 class="text-3xl font-black text-blue-400 mb-2">Kitchen Admin</h1>
+        <p class="text-slate-400 mb-6">Update your live WhatsApp menu</p>
+
+        <div class="space-y-4">
+            <div>
+                <label class="block text-sm font-medium mb-1">Kitchen Name</label>
+                <input id="kName" type="text" placeholder="e.g., Mom's Magic" class="w-full bg-slate-700 p-3 rounded-xl border border-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500">
+            </div>
+
+            <div>
+                <label class="block text-sm font-medium mb-1">Today's Special</label>
+                <textarea id="kItems" rows="3" placeholder="e.g., 3 Roti, Dal Tadka, Rice, Sabzi" class="w-full bg-slate-700 p-3 rounded-xl border border-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500"></textarea>
+            </div>
+
+            <div>
+                <label class="block text-sm font-medium mb-1">Price (₹)</label>
+                <input id="kPrice" type="number" placeholder="120" class="w-full bg-slate-700 p-3 rounded-xl border border-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500">
+            </div>
+
+            <button onclick="updateMenu()" id="btn" class="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-4 rounded-xl transition-all transform active:scale-95 shadow-lg">
+                Go Live on WhatsApp
+            </button>
+        </div>
+
+        <div id="status" class="mt-4 text-center text-sm hidden"></div>
+    </div>
+
+    <script>
+        // PASTE YOUR FIREBASE URL HERE (No trailing slash)
+        const FB_DB_URL = "https://tiffinflow-2f146-default-rtdb.firebaseio.com/";
+
+        async function updateMenu() {
+            const btn = document.getElementById('btn');
+            const status = document.getElementById('status');
+            
+            const data = {
+                name: document.getElementById('kName').value,
+                items: document.getElementById('kItems').value,
+                price: document.getElementById('kPrice').value
+            };
+
+            if(!data.name || !data.items) return alert("Fill all details!");
+
+            btn.innerText = "Syncing...";
+            btn.disabled = true;
+
+            try {
+                // Using 'K01' as a demo ID for Monday. 
+                // In a real app, each kitchen would have their own login/ID.
+                await fetch(`${FB_DB_URL}/menus/K01.json`, {
+                    method: 'PUT',
+                    body: JSON.stringify(data)
+                });
+
+                status.innerText = "✅ Menu updated! Check WhatsApp.";
+                status.classList.remove('hidden', 'text-red-400');
+                status.classList.add('text-green-400');
+            } catch (err) {
+                status.innerText = "❌ Error: " + err.message;
+                status.classList.remove('hidden');
+                status.classList.add('text-red-400');
+            } finally {
+                btn.innerText = "Go Live on WhatsApp";
+                btn.disabled = false;
+            }
+        }
+    </script>
+</body>
+</html>
